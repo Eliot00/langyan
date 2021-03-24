@@ -1,20 +1,20 @@
-pub struct Signal {
-    receivers: Vec<Box<dyn Fn(&str) -> ()>>
+pub struct Signal<T: ?Sized> {
+    receivers: Vec<Box<dyn Fn(&T) -> ()>>
 }
 
-impl Signal {
+impl<T> Signal<T> where T: ?Sized {
     pub fn new() -> Self {
         Self { receivers: vec![] }
     }
 
-    pub fn connect(mut self, f: impl Fn(&str) -> () + 'static) -> Self {
-        self.receivers.push(Box::new(f));
+    pub fn connect(mut self, receiver: impl Fn(&T) -> () + 'static) -> Self {
+        self.receivers.push(Box::new(receiver));
         self
     }
 
-    pub fn send(&self, message: &str) {
+    pub fn send(&self, sender: &T) {
         for receiver in self.receivers.iter() {
-            (receiver)(message)
+            (receiver)(sender)
         }
     }
 }
@@ -33,7 +33,7 @@ mod tests {
         }
 
         let ctx = MockFoo::foo_context();
-        ctx.expect().once().returning(|s| println!("Msg: {}", s));
+        ctx.expect().once().returning(|s| println!("Sender: {}", s));
 
         let signal = Signal::new()
             .connect(MockFoo::foo);
