@@ -1,42 +1,64 @@
-pub struct Signal<T: ?Sized> {
-    receivers: Vec<Box<dyn Receiver<T>>>,
+use std::cell::RefCell;
+
+pub struct Signal<'a, T: ?Sized + 'a> {
+    receivers: RefCell<Vec<&'a Receiver<T>>>,
 }
 
-impl<T> Signal<T>
+impl<'a, T> Signal<'a, T>
 where
-    T: ?Sized,
+    T: ?Sized + 'a,
 {
     pub fn new() -> Self {
-        Self { receivers: vec![] }
+        Self { receivers: RefCell::new(vec![]) }
     }
 
-    pub fn connect<R>(mut self, receiver: R) -> Self
-    where
-        R: Receiver<T> + 'static,
-    {
-        self.receivers.push(Box::new(receiver));
-        self
+    pub fn connect(&self, receiver: &'a Receiver<T>) {
+        self.receivers.borrow_mut().push(receiver);
     }
 
-    pub fn disconnect<R>(&self, _receiver: R)
-    where
-        R: Receiver<T> + 'static,
-    {
-        // Todo
+    pub fn disconnect(&self, receiver: &Receiver<T>) {
+        let idx = self.receivers.borrow().iter().position(
+            |x| x.equal(receiver)
+        );
+        if idx.is_none() {
+            return ();
+        }
+        self.receivers.borrow_mut().remove(idx.unwrap());
     }
 
     pub fn send(&self, sender: &T) {
-        for receiver in self.receivers.iter() {
+        for receiver in self.receivers.borrow().iter() {
             receiver.handle_signal(sender)
         }
     }
 }
 
-pub trait Receiver<T: ?Sized> {
+pub struct Receiver<T: ?Sized> {
+    dispatch_id: String,
+    handler: Box<dyn Receivable<T>>,
+}
+
+impl<T> Receiver<T> where T: ?Sized {
+    pub fn new<R>(handler: R, dispatch_id: String) -> Self
+    where R: Receivable<T> + 'static 
+    {
+        Self {handler: Box::new(handler), dispatch_id}
+    }
+
+    pub fn handle_signal(&self, sender: &T) {
+        self.handler.handle_signal(sender)
+    }
+
+    pub fn equal(&self, other: &Self) -> bool {
+        self.dispatch_id == other.dispatch_id
+    }
+}
+
+pub trait Receivable<T: ?Sized> {
     fn handle_signal(&self, sender: &T);
 }
 
-impl<T, F> Receiver<T> for F
+impl<T, F> Receivable<T> for F
 where
     F: Fn(&T) -> () + 'static,
     T: ?Sized,
@@ -61,7 +83,9 @@ mod tests {
         let ctx = MockFoo::foo_context();
         ctx.expect().once().returning(|s| println!("Sender: {}", s));
 
-        let signal = Signal::new().connect(MockFoo::foo);
+        let signal = Signal::new();
+        let receiver = Receiver::new(MockFoo::foo, "mock_foo".to_string());
+        signal.connect(&receiver);
         signal.send("hello world");
     }
 
@@ -77,10 +101,13 @@ mod tests {
             .once()
             .returning(|s| println!("Only invoke once: {}", s));
 
-        let signal = Signal::new().connect(MockOne::one);
+        let signal = Signal::new();
+        let receiver = Receiver::new(MockOne::one, "mock_one".to_string());
+        signal.connect(&receiver);
+        
         signal.send("first");
 
-        signal.disconnect(MockOne::one);
+        signal.disconnect(&receiver);
 
         signal.send("second");
     }
