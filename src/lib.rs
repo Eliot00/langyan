@@ -11,11 +11,13 @@
 //! 
 //! fn main() {
 //!     let saved = Signal::new();
-//!     let receiver = Receiver::new(after_save, "after_save".to_string());
-//!     saved.connect(&receiver);
+//!     saved.connect(after_save, "after_save");
 //! 
 //!     // after saved file
 //!     saved.send("hello.json");
+//!
+//!     // sometime you want disconnect
+//!     saved.disconnect("after_save");
 //! }
 //! ```
 

@@ -1,29 +1,26 @@
 use std::cell::RefCell;
 
-pub struct Signal<'a, T: ?Sized + 'a> {
-    receivers: RefCell<Vec<&'a Receiver<T>>>,
+pub struct Signal<T: ?Sized> {
+    receivers: RefCell<Vec<Receiver<T>>>,
 }
 
-impl<'a, T> Signal<'a, T>
+impl<T> Signal<T>
 where
-    T: ?Sized + 'a,
+    T: ?Sized
 {
     pub fn new() -> Self {
         Self { receivers: RefCell::new(vec![]) }
     }
 
-    pub fn connect(&self, receiver: &'a Receiver<T>) {
+    pub fn connect<H>(&self, handler: H, dispatch_id: &str) 
+    where H: Handler<T> + 'static
+    {
+        let receiver = Receiver::new(handler, dispatch_id.to_string());
         self.receivers.borrow_mut().push(receiver);
     }
 
-    pub fn disconnect(&self, receiver: &Receiver<T>) {
-        let idx = self.receivers.borrow().iter().position(
-            |x| x.equal(receiver)
-        );
-        if idx.is_none() {
-            return ();
-        }
-        self.receivers.borrow_mut().remove(idx.unwrap());
+    pub fn disconnect(&self, dispatch_id: &str) {
+        self.receivers.borrow_mut().retain(|r| r.dispatch_id != dispatch_id);
     }
 
     pub fn send(&self, sender: &T) {
@@ -35,12 +32,12 @@ where
 
 pub struct Receiver<T: ?Sized> {
     dispatch_id: String,
-    handler: Box<dyn Receivable<T>>,
+    handler: Box<dyn Handler<T>>,
 }
 
 impl<T> Receiver<T> where T: ?Sized {
     pub fn new<R>(handler: R, dispatch_id: String) -> Self
-    where R: Receivable<T> + 'static 
+    where R: Handler<T> + 'static 
     {
         Self {handler: Box::new(handler), dispatch_id}
     }
@@ -54,11 +51,11 @@ impl<T> Receiver<T> where T: ?Sized {
     }
 }
 
-pub trait Receivable<T: ?Sized> {
+pub trait Handler<T: ?Sized> {
     fn handle_signal(&self, sender: &T);
 }
 
-impl<T, F> Receivable<T> for F
+impl<T, F> Handler<T> for F
 where
     F: Fn(&T) -> () + 'static,
     T: ?Sized,
@@ -84,8 +81,7 @@ mod tests {
         ctx.expect().once().returning(|s| println!("Sender: {}", s));
 
         let signal = Signal::new();
-        let receiver = Receiver::new(MockFoo::foo, "mock_foo".to_string());
-        signal.connect(&receiver);
+        signal.connect(MockFoo::foo, "mock_foo");
         signal.send("hello world");
     }
 
@@ -102,12 +98,11 @@ mod tests {
             .returning(|s| println!("Only invoke once: {}", s));
 
         let signal = Signal::new();
-        let receiver = Receiver::new(MockOne::one, "mock_one".to_string());
-        signal.connect(&receiver);
+        signal.connect(MockOne::one, "mock_one");
         
         signal.send("first");
 
-        signal.disconnect(&receiver);
+        signal.disconnect("mock_one");
 
         signal.send("second");
     }
