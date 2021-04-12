@@ -1,61 +1,55 @@
 use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 
 pub struct Signal<T: ?Sized> {
-    receivers: RefCell<Vec<Receiver<T>>>,
+    receivers: RefCell<Vec<Weak<Box<dyn Receiver<T>>>>>,
 }
 
 impl<T> Signal<T>
 where
-    T: ?Sized
+    T: ?Sized,
 {
     pub fn new() -> Self {
-        Self { receivers: RefCell::new(vec![]) }
+        Self {
+            receivers: RefCell::new(vec![]),
+        }
     }
 
-    pub fn connect<H>(&self, handler: H, dispatch_id: &str) 
-    where H: Handler<T> + 'static
+    pub fn connect<R>(&self, receiver: R) -> Rc<Box<dyn Receiver<T>>>
+    where
+        R: Receiver<T> + 'static,
     {
-        let receiver = Receiver::new(handler, dispatch_id.to_string());
-        self.receivers.borrow_mut().push(receiver);
+        let receiver: Box<dyn Receiver<T>> = Box::new(receiver);
+        let subscription = Rc::new(receiver);
+        self.receivers
+            .borrow_mut()
+            .push(Rc::downgrade(&subscription));
+        subscription
     }
 
-    pub fn disconnect(&self, dispatch_id: &str) {
-        self.receivers.borrow_mut().retain(|r| r.dispatch_id != dispatch_id);
-    }
+    pub fn disconnect(&self, _dispatch_id: &str) {}
 
     pub fn send(&self, sender: &T) {
-        for receiver in self.receivers.borrow().iter() {
-            receiver.handle_signal(sender)
+        let mut remove_indices = Vec::new();
+        for (index, receiver) in self.receivers.borrow_mut().iter().enumerate() {
+            let receiver = receiver.upgrade();
+            match receiver {
+                Some(receiver) => receiver.handle_signal(sender),
+                None => remove_indices.push(index),
+            }
+        }
+
+        for &i in remove_indices.iter() {
+            self.receivers.borrow_mut().remove(i);
         }
     }
 }
 
-pub struct Receiver<T: ?Sized> {
-    dispatch_id: String,
-    handler: Box<dyn Handler<T>>,
-}
-
-impl<T> Receiver<T> where T: ?Sized {
-    pub fn new<R>(handler: R, dispatch_id: String) -> Self
-    where R: Handler<T> + 'static 
-    {
-        Self {handler: Box::new(handler), dispatch_id}
-    }
-
-    pub fn handle_signal(&self, sender: &T) {
-        self.handler.handle_signal(sender)
-    }
-
-    pub fn equal(&self, other: &Self) -> bool {
-        self.dispatch_id == other.dispatch_id
-    }
-}
-
-pub trait Handler<T: ?Sized> {
+pub trait Receiver<T: ?Sized> {
     fn handle_signal(&self, sender: &T);
 }
 
-impl<T, F> Handler<T> for F
+impl<T, F> Receiver<T> for F
 where
     F: Fn(&T) -> () + 'static,
     T: ?Sized,
@@ -81,7 +75,7 @@ mod tests {
         ctx.expect().once().returning(|s| println!("Sender: {}", s));
 
         let signal = Signal::new();
-        signal.connect(MockFoo::foo, "mock_foo");
+        let _subscription = signal.connect(MockFoo::foo);
         signal.send("hello world");
     }
 
@@ -98,11 +92,9 @@ mod tests {
             .returning(|s| println!("Only invoke once: {}", s));
 
         let signal = Signal::new();
-        signal.connect(MockOne::one, "mock_one");
-        
+        let subscription = signal.connect(MockOne::one);
         signal.send("first");
-
-        signal.disconnect("mock_one");
+        drop(subscription);
 
         signal.send("second");
     }

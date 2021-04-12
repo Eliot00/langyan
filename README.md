@@ -11,12 +11,12 @@ fn after_save(filename: &str) {
 
 fn main() {
     let saved = Signal::new();
-    saved.connect(after_save, "after_save");
+    let subscription = saved.connect(after_save, "after_save");
 
     // after saved file
     saved.send("hello.json");
 
     // sometime you want disconnect
-    saved.disconnect("after_save");
+    drop(subscription);
 }
 ```
